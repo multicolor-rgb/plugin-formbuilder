@@ -40,7 +40,7 @@ add_action('common', 'formbuilder_init');
 add_filter('content', 'formbuilder_shortcode');
 
 /**
- * Initialize - Create DB with new mail_method column
+ * Initialize - Create DB with new mail_method and mail_charset columns
  */
 function formbuilder_init() {
     // Start session early
@@ -65,6 +65,7 @@ function formbuilder_init() {
             email_to TEXT,
             redirect_url TEXT,
             mail_method TEXT DEFAULT "mailto",
+            mail_charset TEXT DEFAULT "UTF-8",
             smtp_host TEXT,
             smtp_port INTEGER DEFAULT 587,
             smtp_username TEXT,
@@ -112,6 +113,7 @@ function formbuilder_init() {
         // Add new columns if they don't exist
         if (!in_array('mail_method', $columns)) {
             $db->exec('ALTER TABLE forms ADD COLUMN mail_method TEXT DEFAULT "mailto"');
+            $db->exec('ALTER TABLE forms ADD COLUMN mail_charset TEXT DEFAULT "UTF-8"');
             $db->exec('ALTER TABLE forms ADD COLUMN smtp_host TEXT');
             $db->exec('ALTER TABLE forms ADD COLUMN smtp_port INTEGER DEFAULT 587');
             $db->exec('ALTER TABLE forms ADD COLUMN smtp_username TEXT');
@@ -119,6 +121,11 @@ function formbuilder_init() {
             $db->exec('ALTER TABLE forms ADD COLUMN smtp_secure TEXT DEFAULT "tls"');
             $db->exec('ALTER TABLE forms ADD COLUMN smtp_from_email TEXT');
             $db->exec('ALTER TABLE forms ADD COLUMN smtp_from_name TEXT');
+        }
+        
+        // Add charset column if missing
+        if (!in_array('mail_charset', $columns)) {
+            $db->exec('ALTER TABLE forms ADD COLUMN mail_charset TEXT DEFAULT "UTF-8"');
         }
         
         $db->close();
@@ -269,6 +276,31 @@ function formbuilder_main() {
         margin-bottom: 20px;
         transition: all 0.3s ease;
         position: relative;
+        cursor: grab;
+    }
+    .fb-field:active {
+        cursor: grabbing;
+    }
+    .fb-field.dragging {
+        opacity: 0.5;
+        transform: scale(0.98);
+    }
+    .fb-field.drag-over {
+        border-color: #667eea;
+        border-style: dashed;
+        background: #f8fafc;
+    }
+    .fb-drag-handle {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        font-size: 20px;
+        color: #94a3b8;
+        cursor: grab;
+        user-select: none;
+    }
+    .fb-drag-handle:active {
+        cursor: grabbing;
     }
     .fb-field:hover {
         border-color: #667eea;
@@ -433,42 +465,6 @@ function formbuilder_main() {
         gap: 8px;
         cursor: pointer;
     }
-    
-    .fb-field {
-    background: white;
-    border: 2px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 20px;
-    padding-right: 120px;
-    margin-bottom: 20px;
-    transition: all 0.3s ease;
-    position: relative;
-    cursor: grab; /* Dodane */
-}
-.fb-field:active {
-    cursor: grabbing; /* Dodane */
-}
-.fb-field.dragging {
-    opacity: 0.5;
-    transform: scale(0.98);
-}
-.fb-field.drag-over {
-    border-color: #667eea;
-    border-style: dashed;
-    background: #f8fafc;
-}
-.fb-drag-handle {
-    position: absolute;
-    top: 20px;
-    left: 20px;
-    font-size: 20px;
-    color: #94a3b8;
-    cursor: grab;
-    user-select: none;
-}
-.fb-drag-handle:active {
-    cursor: grabbing;
-}
     </style>';
     
     if (isset($_GET['delete_sub'])) {
@@ -524,7 +520,7 @@ function formbuilder_duplicate($fid) {
     $newName = $form['name'] . ' (Copy)';
     
     // Insert duplicated form
-    $stmt = $db->prepare('INSERT INTO forms (name, slug, title, description, submit_text, success_msg, enable_captcha, captcha_site, captcha_secret, email_to, redirect_url, mail_method, smtp_host, smtp_port, smtp_username, smtp_password, smtp_secure, smtp_from_email, smtp_from_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $stmt = $db->prepare('INSERT INTO forms (name, slug, title, description, submit_text, success_msg, enable_captcha, captcha_site, captcha_secret, email_to, redirect_url, mail_method, mail_charset, smtp_host, smtp_port, smtp_username, smtp_password, smtp_secure, smtp_from_email, smtp_from_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     
     $stmt->bindValue(1, $newName);
     $stmt->bindValue(2, $newSlug);
@@ -538,13 +534,14 @@ function formbuilder_duplicate($fid) {
     $stmt->bindValue(10, $form['email_to']);
     $stmt->bindValue(11, $form['redirect_url']);
     $stmt->bindValue(12, $form['mail_method'] ?? 'mailto');
-    $stmt->bindValue(13, $form['smtp_host'] ?? '');
-    $stmt->bindValue(14, $form['smtp_port'] ?? 587, SQLITE3_INTEGER);
-    $stmt->bindValue(15, $form['smtp_username'] ?? '');
-    $stmt->bindValue(16, $form['smtp_password'] ?? '');
-    $stmt->bindValue(17, $form['smtp_secure'] ?? 'tls');
-    $stmt->bindValue(18, $form['smtp_from_email'] ?? '');
-    $stmt->bindValue(19, $form['smtp_from_name'] ?? '');
+    $stmt->bindValue(13, $form['mail_charset'] ?? 'UTF-8');
+    $stmt->bindValue(14, $form['smtp_host'] ?? '');
+    $stmt->bindValue(15, $form['smtp_port'] ?? 587, SQLITE3_INTEGER);
+    $stmt->bindValue(16, $form['smtp_username'] ?? '');
+    $stmt->bindValue(17, $form['smtp_password'] ?? '');
+    $stmt->bindValue(18, $form['smtp_secure'] ?? 'tls');
+    $stmt->bindValue(19, $form['smtp_from_email'] ?? '');
+    $stmt->bindValue(20, $form['smtp_from_name'] ?? '');
     $stmt->execute();
     
     $newFormId = $db->lastInsertRowID();
@@ -680,6 +677,7 @@ function formbuilder_edit($fid) {
         
         // New mail settings
         $mail_method = $_POST['mail_method'] ?? 'mailto';
+        $mail_charset = $_POST['mail_charset'] ?? 'UTF-8';
         $smtp_host = $_POST['smtp_host'] ?? '';
         $smtp_port = (int)($_POST['smtp_port'] ?? 587);
         $smtp_username = $_POST['smtp_username'] ?? '';
@@ -689,10 +687,10 @@ function formbuilder_edit($fid) {
         $smtp_from_name = $_POST['smtp_from_name'] ?? '';
         
         if ($fid > 0) {
-            $stmt = $db->prepare('UPDATE forms SET name=?, slug=?, title=?, description=?, submit_text=?, success_msg=?, enable_captcha=?, captcha_site=?, captcha_secret=?, email_to=?, redirect_url=?, mail_method=?, smtp_host=?, smtp_port=?, smtp_username=?, smtp_password=?, smtp_secure=?, smtp_from_email=?, smtp_from_name=? WHERE id=?');
-            $stmt->bindValue(20, $fid, SQLITE3_INTEGER);
+            $stmt = $db->prepare('UPDATE forms SET name=?, slug=?, title=?, description=?, submit_text=?, success_msg=?, enable_captcha=?, captcha_site=?, captcha_secret=?, email_to=?, redirect_url=?, mail_method=?, mail_charset=?, smtp_host=?, smtp_port=?, smtp_username=?, smtp_password=?, smtp_secure=?, smtp_from_email=?, smtp_from_name=? WHERE id=?');
+            $stmt->bindValue(21, $fid, SQLITE3_INTEGER);
         } else {
-            $stmt = $db->prepare('INSERT INTO forms (name, slug, title, description, submit_text, success_msg, enable_captcha, captcha_site, captcha_secret, email_to, redirect_url, mail_method, smtp_host, smtp_port, smtp_username, smtp_password, smtp_secure, smtp_from_email, smtp_from_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt = $db->prepare('INSERT INTO forms (name, slug, title, description, submit_text, success_msg, enable_captcha, captcha_site, captcha_secret, email_to, redirect_url, mail_method, mail_charset, smtp_host, smtp_port, smtp_username, smtp_password, smtp_secure, smtp_from_email, smtp_from_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         }
         
         $stmt->bindValue(1, $name);
@@ -707,13 +705,14 @@ function formbuilder_edit($fid) {
         $stmt->bindValue(10, $email);
         $stmt->bindValue(11, $redirect);
         $stmt->bindValue(12, $mail_method);
-        $stmt->bindValue(13, $smtp_host);
-        $stmt->bindValue(14, $smtp_port, SQLITE3_INTEGER);
-        $stmt->bindValue(15, $smtp_username);
-        $stmt->bindValue(16, $smtp_password);
-        $stmt->bindValue(17, $smtp_secure);
-        $stmt->bindValue(18, $smtp_from_email);
-        $stmt->bindValue(19, $smtp_from_name);
+        $stmt->bindValue(13, $mail_charset);
+        $stmt->bindValue(14, $smtp_host);
+        $stmt->bindValue(15, $smtp_port, SQLITE3_INTEGER);
+        $stmt->bindValue(16, $smtp_username);
+        $stmt->bindValue(17, $smtp_password);
+        $stmt->bindValue(18, $smtp_secure);
+        $stmt->bindValue(19, $smtp_from_email);
+        $stmt->bindValue(20, $smtp_from_name);
         $stmt->execute();
         
         if ($fid == 0) {
@@ -829,6 +828,18 @@ function formbuilder_edit($fid) {
     echo i18n_r('formbuilder/MAIL_METHOD_SMTP');
     echo '</label>';
     echo '</div>';
+    echo '</div>';
+    
+    // NOWE: Wybór kodowania
+    echo '<div class="fb-form-group">';
+    echo '<label>' . i18n_r('formbuilder/MAIL_CHARSET') . '</label>';
+    echo '<select name="mail_charset" class="text">';
+    $mail_charset = $form['mail_charset'] ?? 'UTF-8';
+    echo '<option value="UTF-8" ' . ($mail_charset == 'UTF-8' ? 'selected' : '') . '>' . i18n_r('formbuilder/MAIL_CHARSET_UTF8') . '</option>';
+    echo '<option value="ISO-8859-2" ' . ($mail_charset == 'ISO-8859-2' ? 'selected' : '') . '>' . i18n_r('formbuilder/MAIL_CHARSET_ISO') . '</option>';
+    echo '<option value="Windows-1250" ' . ($mail_charset == 'Windows-1250' ? 'selected' : '') . '>' . i18n_r('formbuilder/MAIL_CHARSET_WIN') . '</option>';
+    echo '</select>';
+    echo '<p style="margin-top:8px; font-size:13px; color:#6b7280;">ℹ️ ' . i18n_r('formbuilder/MAIL_CHARSET_INFO') . '</p>';
     echo '</div>';
     
     echo '<div id="smtp-options" class="fb-smtp-options ' . ($mail_method == 'smtp' ? 'active' : '') . '">';
@@ -949,7 +960,7 @@ function addField() {
     document.getElementById("fields").insertAdjacentHTML("beforeend", html);
     fieldNum++;
     attachTypeListeners();
-    attachDragListeners(); // DODANE
+    attachDragListeners();
     updateFieldNumbers();
 }
 
@@ -967,7 +978,6 @@ function attachTypeListeners() {
     });
 }
 
-// NOWA FUNKCJA: Aktualizacja numeracji pól
 function updateFieldNumbers() {
     const fields = document.querySelectorAll("#fields .fb-field");
     fields.forEach((field, index) => {
@@ -975,7 +985,6 @@ function updateFieldNumbers() {
         if (numberSpan) {
             numberSpan.textContent = index + 1;
         }
-        // Aktualizuj name attributes
         field.querySelectorAll("input, select, textarea").forEach(input => {
             if (input.name && input.name.includes("fields[")) {
                 input.name = input.name.replace(/fields\[\d+\]/, "fields[" + index + "]");
@@ -984,7 +993,6 @@ function updateFieldNumbers() {
     });
 }
 
-// NOWA FUNKCJA: Drag & Drop
 function attachDragListeners() {
     const fields = document.querySelectorAll("#fields .fb-field");
     
@@ -1053,12 +1061,10 @@ document.addEventListener("click", function(e) {
     }
 });
 
-// Inicjalizacja
 attachTypeListeners();
 attachDragListeners();
 updateFieldNumbers();
 </script>';
-
 }
 
 /**
@@ -1079,11 +1085,9 @@ function formbuilder_field_html($i, $f) {
     
     $is_file = ($f && $f['type'] == 'file');
     
-    // DODANE: draggable attribute
     $html = '<div class="fb-field" draggable="true">';
     
-    // DODANE: Drag handle (ikona ⠿)
-    $html .= '<span class="fb-drag-handle" title="Przeciągnij aby zmienić kolejność">⠿</span>';
+    $html .= '<span class="fb-drag-handle" title="' . i18n_r('formbuilder/BTN_REMOVE') . '">⠿</span>';
     
     $html .= '<button type="button" class="fb-field-remove">' . i18n_r('formbuilder/BTN_REMOVE') . '</button>';
     $html .= '<h5>' . i18n_r('formbuilder/FIELD_NUM') . ' <span class="field-number">' . ($is_tpl ? '${fieldNum + 1}' : ($i + 1)) . '</span></h5>';
@@ -1124,7 +1128,6 @@ function formbuilder_field_html($i, $f) {
     
     return $html;
 }
-
 
 /**
  * Delete form
@@ -1233,7 +1236,6 @@ function show_form($slug, $echo = true) {
     $errors = array();
     $success = false;
     
-    // Check if we just redirected back with success
     if (isset($_GET['fb_success']) && $_GET['fb_success'] == $form['id']) {
         $success = true;
     }
@@ -1243,7 +1245,6 @@ function show_form($slug, $echo = true) {
     }
     $csrf_token = $_SESSION['fb_csrf_' . $form['id']];
     
-    // Process form submission ONLY if not already successful
     if (isset($_POST['fb_submit_' . $form['id']]) && !$success) {
         
         if (!isset($_POST['fb_csrf']) || $_POST['fb_csrf'] !== $csrf_token) {
@@ -1361,14 +1362,12 @@ function show_form($slug, $echo = true) {
                 }
                 
                 if (empty($errors)) {
-                    // Save to database
                     $stmt = $db->prepare('INSERT INTO submissions (form_id, data, ip) VALUES (?, ?, ?)');
                     $stmt->bindValue(1, $form['id'], SQLITE3_INTEGER);
                     $stmt->bindValue(2, json_encode($data, JSON_UNESCAPED_UNICODE), SQLITE3_TEXT);
                     $stmt->bindValue(3, htmlspecialchars($ip, ENT_QUOTES, 'UTF-8'), SQLITE3_TEXT);
                     $stmt->execute();
                     
-                    // Send email
                     if (!empty($form['email_to']) && filter_var($form['email_to'], FILTER_VALIDATE_EMAIL)) {
                         $mail_method = $form['mail_method'] ?? 'mailto';
                         
@@ -1379,27 +1378,20 @@ function show_form($slug, $echo = true) {
                         }
                     }
                     
-                    // Regenerate CSRF token
                     $_SESSION['fb_csrf_' . $form['id']] = bin2hex(random_bytes(32));
                     
-                    // Close DB before redirect
                     $db->close();
                     
-                    // REDIRECT - Post/Redirect/Get pattern
                     if (!empty($form['redirect_url'])) {
-                        // External redirect
                         header('Location: ' . $form['redirect_url']);
                         exit;
                     } else {
-                        // Redirect to same page with success parameter
                         $protocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? "https" : "http";
                         $current_url = $protocol . "://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
                         
-                        // Remove existing fb_success parameter if exists
                         $current_url = preg_replace('/([?&])fb_success=[^&]*(&|$)/', '$1', $current_url);
                         $current_url = rtrim($current_url, '?&');
                         
-                        // Add fb_success parameter
                         $separator = (strpos($current_url, '?') !== false) ? '&' : '?';
                         header('Location: ' . $current_url . $separator . 'fb_success=' . $form['id']);
                         exit;
@@ -1537,7 +1529,6 @@ function show_form($slug, $echo = true) {
                 <?php echo htmlspecialchars($form['success_msg'], ENT_QUOTES, 'UTF-8'); ?>
             </div>
             <script>
-            // Optional: Remove success parameter from URL after display
             if (window.history.replaceState) {
                 let url = new URL(window.location);
                 url.searchParams.delete('fb_success');
@@ -1647,51 +1638,77 @@ function show_form($slug, $echo = true) {
 }
 
 /**
- * Send email using standard mail() WITH attachments
+ * Send email using standard mail() WITH attachments and charset support
  */
 function formbuilder_send_standard_email($form, $data, $uploaded_files) {
     $to = $form['email_to'];
-    $subject = i18n_r('formbuilder/EMAIL_SUBJECT') . $form['name'];
+    $charset = $form['mail_charset'] ?? 'UTF-8';
+    
+    $subjectText = i18n_r('formbuilder/EMAIL_SUBJECT') . $form['name'];
+    
+    if ($charset != 'UTF-8') {
+        $subjectText = mb_convert_encoding($subjectText, $charset, 'UTF-8');
+    }
+    
+    $subject = '=?' . $charset . '?B?' . base64_encode($subjectText) . '?=';
     
     $message = i18n_r('formbuilder/EMAIL_NEW_SUBMISSION') . $form['name'] . "\n\n";
     foreach ($data as $k => $v) {
         $message .= ucfirst(str_replace('_', ' ', $k)) . ": " . $v . "\n";
     }
     
+    if ($charset != 'UTF-8') {
+        $message = mb_convert_encoding($message, $charset, 'UTF-8');
+    }
+    
     if (!empty($uploaded_files)) {
-        // Create multipart email with attachments
         $boundary = md5(time());
         
-        $headers = "From: noreply@" . $_SERVER['HTTP_HOST'] . "\r\n";
+        $fromName = !empty($form['smtp_from_name']) ? $form['smtp_from_name'] : 'Formularze';
+        if ($charset != 'UTF-8') {
+            $fromName = mb_convert_encoding($fromName, $charset, 'UTF-8');
+        }
+        
+        $headers = "From: =?" . $charset . "?B?" . base64_encode($fromName) . "?= <noreply@" . $_SERVER['HTTP_HOST'] . ">\r\n";
         $headers .= "MIME-Version: 1.0\r\n";
         $headers .= "Content-Type: multipart/mixed; boundary=\"{$boundary}\"\r\n";
         
         $body = "--{$boundary}\r\n";
-        $body .= "Content-Type: text/plain; charset=UTF-8\r\n";
-        $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
+        $body .= "Content-Type: text/plain; charset=" . $charset . "\r\n";
+        $body .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
         $body .= $message . "\r\n\r\n";
         
-        // Add attachments
         foreach ($uploaded_files as $file) {
             if (file_exists($file['path'])) {
                 $fileContent = chunk_split(base64_encode(file_get_contents($file['path'])));
                 
+                $filename = $file['name'];
+                if ($charset != 'UTF-8') {
+                    $filename = mb_convert_encoding($filename, $charset, 'UTF-8');
+                }
+                $encodedFilename = '=?' . $charset . '?B?' . base64_encode($filename) . '?=';
+                
                 $body .= "--{$boundary}\r\n";
-                $body .= "Content-Type: {$file['mime']}; name=\"{$file['name']}\"\r\n";
+                $body .= "Content-Type: {$file['mime']}; name=\"{$encodedFilename}\"\r\n";
                 $body .= "Content-Transfer-Encoding: base64\r\n";
-                $body .= "Content-Disposition: attachment; filename=\"{$file['name']}\"\r\n\r\n";
+                $body .= "Content-Disposition: attachment; filename=\"{$encodedFilename}\"\r\n\r\n";
                 $body .= $fileContent . "\r\n";
             }
         }
         
         $body .= "--{$boundary}--";
         
-        // Send with timeout protection
         @mail($to, $subject, $body, $headers);
     } else {
-        // Simple email without attachments
-        $headers = 'From: noreply@' . $_SERVER['HTTP_HOST'] . "\r\n";
-        $headers .= 'Content-Type: text/plain; charset=UTF-8';
+        $fromName = !empty($form['smtp_from_name']) ? $form['smtp_from_name'] : 'Formularze';
+        if ($charset != 'UTF-8') {
+            $fromName = mb_convert_encoding($fromName, $charset, 'UTF-8');
+        }
+        
+        $headers = "From: =?" . $charset . "?B?" . base64_encode($fromName) . "?= <noreply@" . $_SERVER['HTTP_HOST'] . ">\r\n";
+        $headers .= "MIME-Version: 1.0\r\n";
+        $headers .= "Content-Type: text/plain; charset=" . $charset . "\r\n";
+        $headers .= "Content-Transfer-Encoding: 8bit\r\n";
         
         @mail($to, $subject, $message, $headers);
     }
@@ -1700,13 +1717,11 @@ function formbuilder_send_standard_email($form, $data, $uploaded_files) {
 }
 
 /**
- * Send email using SMTP (PHPMailer) with timeout protection and attachments
+ * Send email using SMTP (PHPMailer) with timeout protection, attachments and charset support
  */
 function formbuilder_send_smtp_email($form, $data, $uploaded_files) {
-    // Timeout protection
     set_time_limit(30);
     
-    // Check if PHPMailer is available
     if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
         error_log('PHPMailer not found - falling back to mail()');
         formbuilder_send_standard_email($form, $data, $uploaded_files);
@@ -1716,7 +1731,6 @@ function formbuilder_send_smtp_email($form, $data, $uploaded_files) {
     try {
         $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
         
-        // SMTP configuration with timeouts
         $mail->isSMTP();
         $mail->Host = $form['smtp_host'];
         $mail->SMTPAuth = true;
@@ -1724,10 +1738,12 @@ function formbuilder_send_smtp_email($form, $data, $uploaded_files) {
         $mail->Password = $form['smtp_password'];
         $mail->SMTPSecure = $form['smtp_secure'] ?? 'tls';
         $mail->Port = $form['smtp_port'] ?? 587;
-        $mail->CharSet = 'UTF-8';
         
-        // CRITICAL: Set timeouts to prevent hanging
-        $mail->Timeout = 10; // Connection timeout in seconds
+        $charset = $form['mail_charset'] ?? 'UTF-8';
+        $mail->CharSet = $charset;
+        $mail->Encoding = 'base64';
+        
+        $mail->Timeout = 10;
         $mail->SMTPOptions = array(
             'ssl' => array(
                 'verify_peer' => false,
@@ -1736,10 +1752,8 @@ function formbuilder_send_smtp_email($form, $data, $uploaded_files) {
             )
         );
         
-        // Disable debug output
         $mail->SMTPDebug = 0;
         
-        // Recipients
         $fromEmail = !empty($form['smtp_from_email']) ? $form['smtp_from_email'] : $form['smtp_username'];
         $fromName = !empty($form['smtp_from_name']) ? $form['smtp_from_name'] : $form['name'];
         
@@ -1747,17 +1761,22 @@ function formbuilder_send_smtp_email($form, $data, $uploaded_files) {
         $mail->addAddress($form['email_to']);
         $mail->addReplyTo($fromEmail, $fromName);
         
-        // Content
         $mail->isHTML(false);
-        $mail->Subject = i18n_r('formbuilder/EMAIL_SUBJECT') . $form['name'];
         
+        $subjectText = i18n_r('formbuilder/EMAIL_SUBJECT') . $form['name'];
         $message = i18n_r('formbuilder/EMAIL_NEW_SUBMISSION') . $form['name'] . "\n\n";
         foreach ($data as $k => $v) {
             $message .= ucfirst(str_replace('_', ' ', $k)) . ": " . $v . "\n";
         }
+        
+        if ($charset != 'UTF-8') {
+            $subjectText = mb_convert_encoding($subjectText, $charset, 'UTF-8');
+            $message = mb_convert_encoding($message, $charset, 'UTF-8');
+        }
+        
+        $mail->Subject = $subjectText;
         $mail->Body = $message;
         
-        // Attachments - PRZYWRÓCONE
         if (!empty($uploaded_files)) {
             foreach ($uploaded_files as $file) {
                 if (file_exists($file['path'])) {
@@ -1766,18 +1785,13 @@ function formbuilder_send_smtp_email($form, $data, $uploaded_files) {
             }
         }
         
-        // Send with error suppression to prevent hanging
         @$mail->send();
         return true;
         
     } catch (\Exception $e) {
-        // Log but don't stop execution
         error_log('PHPMailer Error: ' . $e->getMessage());
-        
-        // Fallback to standard mail if SMTP fails
         formbuilder_send_standard_email($form, $data, $uploaded_files);
         return false;
     }
 }
 ?>
-

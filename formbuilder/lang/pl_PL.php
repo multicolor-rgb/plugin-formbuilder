@@ -160,4 +160,10 @@ $i18n = array(
     // Email
     'EMAIL_SUBJECT' => 'Zgłoszenie z formularza: ',
     'EMAIL_NEW_SUBMISSION' => 'Nowe zgłoszenie: ',
+    
+    'MAIL_CHARSET' => 'Kodowanie wiadomości',
+'MAIL_CHARSET_UTF8' => 'UTF-8 (Unicode - zalecane)',
+'MAIL_CHARSET_ISO' => 'ISO-8859-2 (Latin-2)',
+'MAIL_CHARSET_WIN' => 'Windows-1250 (CP1250)',
+'MAIL_CHARSET_INFO' => 'UTF-8 obsługuje wszystkie języki. Zmień tylko jeśli klient email ma problemy z wyświetlaniem.',
 );
