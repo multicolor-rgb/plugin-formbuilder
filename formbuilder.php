@@ -433,6 +433,42 @@ function formbuilder_main() {
         gap: 8px;
         cursor: pointer;
     }
+    
+    .fb-field {
+    background: white;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+    padding-right: 120px;
+    margin-bottom: 20px;
+    transition: all 0.3s ease;
+    position: relative;
+    cursor: grab; /* Dodane */
+}
+.fb-field:active {
+    cursor: grabbing; /* Dodane */
+}
+.fb-field.dragging {
+    opacity: 0.5;
+    transform: scale(0.98);
+}
+.fb-field.drag-over {
+    border-color: #667eea;
+    border-style: dashed;
+    background: #f8fafc;
+}
+.fb-drag-handle {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    font-size: 20px;
+    color: #94a3b8;
+    cursor: grab;
+    user-select: none;
+}
+.fb-drag-handle:active {
+    cursor: grabbing;
+}
     </style>';
     
     if (isset($_GET['delete_sub'])) {
@@ -895,46 +931,134 @@ function formbuilder_edit($fid) {
     echo '</form>';
     
     echo '<script>
-    let fieldNum = ' . count($fields) . ';
-    
-    function toggleSmtpOptions() {
-        const smtpRadio = document.querySelector("input[name=\'mail_method\'][value=\'smtp\']");
-        const smtpOptions = document.getElementById("smtp-options");
-        if (smtpRadio && smtpRadio.checked) {
-            smtpOptions.classList.add("active");
-        } else {
-            smtpOptions.classList.remove("active");
+let fieldNum = ' . count($fields) . ';
+let draggedElement = null;
+
+function toggleSmtpOptions() {
+    const smtpRadio = document.querySelector("input[name=\'mail_method\'][value=\'smtp\']");
+    const smtpOptions = document.getElementById("smtp-options");
+    if (smtpRadio && smtpRadio.checked) {
+        smtpOptions.classList.add("active");
+    } else {
+        smtpOptions.classList.remove("active");
+    }
+}
+
+function addField() {
+    let html = `' . str_replace(["\n", '`'], ['', '\\`'], formbuilder_field_html('${fieldNum}', null)) . '`;
+    document.getElementById("fields").insertAdjacentHTML("beforeend", html);
+    fieldNum++;
+    attachTypeListeners();
+    attachDragListeners(); // DODANE
+    updateFieldNumbers();
+}
+
+function attachTypeListeners() {
+    document.querySelectorAll("select[name*=\'[type]\']").forEach(function(sel) {
+        sel.addEventListener("change", function() {
+            const parent = this.closest(".fb-field");
+            const fileOpts = parent.querySelector(".fb-file-options");
+            if (this.value === "file" && fileOpts) {
+                fileOpts.classList.add("active");
+            } else if (fileOpts) {
+                fileOpts.classList.remove("active");
+            }
+        });
+    });
+}
+
+// NOWA FUNKCJA: Aktualizacja numeracji pól
+function updateFieldNumbers() {
+    const fields = document.querySelectorAll("#fields .fb-field");
+    fields.forEach((field, index) => {
+        const numberSpan = field.querySelector(".field-number");
+        if (numberSpan) {
+            numberSpan.textContent = index + 1;
         }
-    }
+        // Aktualizuj name attributes
+        field.querySelectorAll("input, select, textarea").forEach(input => {
+            if (input.name && input.name.includes("fields[")) {
+                input.name = input.name.replace(/fields\[\d+\]/, "fields[" + index + "]");
+            }
+        });
+    });
+}
+
+// NOWA FUNKCJA: Drag & Drop
+function attachDragListeners() {
+    const fields = document.querySelectorAll("#fields .fb-field");
     
-    function addField() {
-        let html = `' . str_replace(["\n", '`'], ['', '\\`'], formbuilder_field_html('${fieldNum}', null)) . '`;
-        document.getElementById("fields").insertAdjacentHTML("beforeend", html);
-        fieldNum++;
-        attachTypeListeners();
-    }
-    function attachTypeListeners() {
-        document.querySelectorAll("select[name*=\'[type]\']").forEach(function(sel) {
-            sel.addEventListener("change", function() {
-                const parent = this.closest(".fb-field");
-                const fileOpts = parent.querySelector(".fb-file-options");
-                if (this.value === "file" && fileOpts) {
-                    fileOpts.classList.add("active");
-                } else if (fileOpts) {
-                    fileOpts.classList.remove("active");
-                }
+    fields.forEach(field => {
+        field.addEventListener("dragstart", function(e) {
+            draggedElement = this;
+            this.classList.add("dragging");
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/html", this.innerHTML);
+        });
+        
+        field.addEventListener("dragend", function(e) {
+            this.classList.remove("dragging");
+            document.querySelectorAll("#fields .fb-field").forEach(f => {
+                f.classList.remove("drag-over");
             });
         });
-    }
-    document.addEventListener("click", function(e) {
-        if (e.target.classList.contains("fb-field-remove")) {
-            if (confirm("' . i18n_r('formbuilder/CONFIRM_REMOVE_FIELD') . '")) {
-                e.target.closest(".fb-field").remove();
+        
+        field.addEventListener("dragover", function(e) {
+            if (e.preventDefault) {
+                e.preventDefault();
             }
-        }
+            e.dataTransfer.dropEffect = "move";
+            
+            if (draggedElement !== this) {
+                this.classList.add("drag-over");
+            }
+            return false;
+        });
+        
+        field.addEventListener("dragleave", function(e) {
+            this.classList.remove("drag-over");
+        });
+        
+        field.addEventListener("drop", function(e) {
+            if (e.stopPropagation) {
+                e.stopPropagation();
+            }
+            
+            if (draggedElement !== this) {
+                const allFields = Array.from(document.querySelectorAll("#fields .fb-field"));
+                const draggedIndex = allFields.indexOf(draggedElement);
+                const targetIndex = allFields.indexOf(this);
+                
+                if (draggedIndex < targetIndex) {
+                    this.parentNode.insertBefore(draggedElement, this.nextSibling);
+                } else {
+                    this.parentNode.insertBefore(draggedElement, this);
+                }
+                
+                updateFieldNumbers();
+            }
+            
+            this.classList.remove("drag-over");
+            return false;
+        });
     });
-    attachTypeListeners();
-    </script>';
+}
+
+document.addEventListener("click", function(e) {
+    if (e.target.classList.contains("fb-field-remove")) {
+        if (confirm("' . i18n_r('formbuilder/CONFIRM_REMOVE_FIELD') . '")) {
+            e.target.closest(".fb-field").remove();
+            updateFieldNumbers();
+        }
+    }
+});
+
+// Inicjalizacja
+attachTypeListeners();
+attachDragListeners();
+updateFieldNumbers();
+</script>';
+
 }
 
 /**
@@ -955,9 +1079,14 @@ function formbuilder_field_html($i, $f) {
     
     $is_file = ($f && $f['type'] == 'file');
     
-    $html = '<div class="fb-field">';
+    // DODANE: draggable attribute
+    $html = '<div class="fb-field" draggable="true">';
+    
+    // DODANE: Drag handle (ikona ⠿)
+    $html .= '<span class="fb-drag-handle" title="Przeciągnij aby zmienić kolejność">⠿</span>';
+    
     $html .= '<button type="button" class="fb-field-remove">' . i18n_r('formbuilder/BTN_REMOVE') . '</button>';
-    $html .= '<h5>' . i18n_r('formbuilder/FIELD_NUM') . ' ' . ($is_tpl ? '${fieldNum + 1}' : ($i + 1)) . '</h5>';
+    $html .= '<h5>' . i18n_r('formbuilder/FIELD_NUM') . ' <span class="field-number">' . ($is_tpl ? '${fieldNum + 1}' : ($i + 1)) . '</span></h5>';
     
     $html .= '<label>' . i18n_r('formbuilder/FIELD_TYPE') . '</label>';
     $html .= '<select name="fields[' . $i . '][type]" required>';
@@ -995,6 +1124,7 @@ function formbuilder_field_html($i, $f) {
     
     return $html;
 }
+
 
 /**
  * Delete form
@@ -1650,3 +1780,4 @@ function formbuilder_send_smtp_email($form, $data, $uploaded_files) {
     }
 }
 ?>
+
